@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<script>
+alert('This will not run!')</script>
+<rect x="10" y="10" width="80" height="80" fill="#ff6b6b" onclick="alert(location.href + ' - ' + document.cookie)"/>
+<text x="50" y="55" text-anchor="middle" fill="#fff">
+JS Ignored</text>
+</svg>
