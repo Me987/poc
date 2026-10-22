@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maximum Capacity QR Code Generator</title>
+<style>
+  :root { color-scheme: light dark; --accent:#2563eb; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, Segoe UI, sans-serif; max-width: 900px; margin: 0 auto; padding: 24px; line-height: 1.5; }
+  h1 { line-height: 1.15; }
+  textarea { width: 100%; min-height: 190px; padding: 12px; font: 15px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; border: 1px solid #8888; border-radius: 10px; }
+  button, select { font: inherit; padding: 10px 14px; border-radius: 8px; border: 1px solid #8888; }
+  button { cursor: pointer; background: var(--accent); color: white; border: 0; }
+  button.secondary { background: transparent; color: inherit; border: 1px solid #8888; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin: 12px 0; }
+  .panel { border: 1px solid #8885; border-radius: 12px; padding: 16px; margin-top: 16px; }
+  #qr { display:flex; justify-content:center; overflow:auto; padding:12px; background:white; border-radius:8px; min-height: 80px; }
+  #qr canvas, #qr img { max-width:100%; height:auto; image-rendering: pixelated; }
+  #status { white-space: pre-wrap; overflow-wrap:anywhere; }
+  .muted { opacity:.78; font-size:.92rem; }
+  label { display:flex; gap:8px; align-items:center; }
+</style>
+</head>
+<body>
+<h1>Maximum Capacity QR Code Generator</h1>
+<p>Paste or type text below. The generator automatically tries the lowest error-correction level first to fit the most data, while using QR versions up to Version 40.</p>
+
+<label for="text">Text to encode</label>
+<textarea id="text" placeholder="Paste text, a URL, or other content here…"></textarea>
+
+<div class="controls">
+  <label for="ecc">Error correction
+    <select id="ecc">
+      <option value="auto" selected>Maximum capacity (automatic)</option>
+      <option value="L">L — Low (~7%, most data)</option>
+      <option value="M">M — Medium (~15%)</option>
+      <option value="Q">Q — Quartile (~25%)</option>
+      <option value="H">H — High (~30%, least data)</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="utf8" checked> Encode Unicode as UTF-8</label>
+  <button id="generate">Generate QR code</button>
+  <button id="download" class="secondary" disabled>Download PNG</button>
+  <button id="clear" class="secondary">Clear</button>
+</div>
+
+<div class="panel">
+  <div id="qr" aria-label="Generated QR code"><span class="muted" style="color:#333">Your QR code will appear here.</span></div>
+  <p id="status" role="status">Ready.</p>
+  <p class="muted">Tip: If the text is too long, shorten it or encode a URL that points to the full text. A QR code has a finite capacity; no setting can exceed the standard's limit.</p>
+</div>
+
+<!-- QRCode.js is loaded from a CDN. Internet access is needed unless you save the library locally. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+(() => {
+  const textEl = document.getElementById('text');
+  const eccEl = document.getElementById('ecc');
+  const utf8El = document.getElementById('utf8');
+  const qrEl = document.getElementById('qr');
+  const statusEl = document.getElementById('status');
+  const downloadBtn = document.getElementById('download');
+  let currentCanvas = null;
+
+  // QRCode.js supports versions 1–40. It does not expose the chosen version,
+  // so try increasing versions explicitly and stop at the first that fits.
+  const LEVELS = { L: 1, M: 0, Q: 3, H: 2 };
+  const AUTO_ORDER = ['L', 'M', 'Q', 'H'];
+
+  function byteLength(str) {
+    return new TextEncoder().encode(str).length;
+  }
+
+  function clearQR() {
+    qrEl.innerHTML = '';
+    currentCanvas = null;
+    downloadBtn.disabled = true;
+  }
+
+  function makeAttempt(value, version, level) {
+    qrEl.innerHTML = '';
+    try {
+      new QRCode(qrEl, {
+        text: value,
+        width: 640,
+        height: 640,
+        correctLevel: QRCode.CorrectLevel[level],
+        version: version
+      });
+      const canvas = qrEl.querySelector('canvas');
+      const img = qrEl.querySelector('img');
+      // qrcodejs may silently fall back or fail on overflow depending on version.
+      // Confirm that the generated image is present; overflow exceptions are caught.
+      if (canvas) return { ok: true, canvas, version, level };
+      if (img && img.src) return { ok: true, image: img, version, level };
+    } catch (err) {
+      // Most commonly "code length overflow"; try the next version.
+    }
+    return { ok: false };
+  }
+
+  function generate() {
+    clearQR();
+    const value = textEl.value;
+    if (!value) {
+      statusEl.textContent = 'Enter some text first.';
+      return;
+    }
+    if (typeof QRCode === 'undefined') {
+      statusEl.textContent = 'Could not load the QR library. Check your internet connection or download qrcode.min.js and reference it locally.';
+      return;
+    }
+
+    const bytes = byteLength(value);
+    const levels = eccEl.value === 'auto' ? AUTO_ORDER : [eccEl.value];
+    let result = null;
+
+    // For each level, find the smallest version that fits. Auto mode prioritizes
+    // capacity by trying L first; if it fits at any version, it is optimal for data size.
+    outer: for (const level of levels) {
+      for (let version = 1; version <= 40; version++) {
+        const attempt = makeAttempt(value, version, level);
+        if (attempt.ok) {
+          result = attempt;
+          break outer;
+        }
+      }
+    }
+
+    if (!result) {
+      clearQR();
+      statusEl.textContent =
+        `Text could not be encoded by this QR library. Character count: ${[...value].length}; UTF-8 bytes: ${bytes}. ` +
+        'Try shortening the text or encoding a link to the full content. Standard QR byte-mode capacity is up to 2,953 bytes at error correction L, though actual capacity depends on encoding and overhead.';
+      return;
+    }
+
+    // Re-render at a practical size with a quiet margin for reliable scanning.
+    qrEl.innerHTML = '';
+    try {
+      new QRCode(qrEl, {
+        text: value,
+        width: 640,
+        height: 640,
+        correctLevel: QRCode.CorrectLevel[result.level],
+        version: result.version
+      });
+    } catch (e) {
+      statusEl.textContent = 'The QR code could not be rendered. Try shorter text.';
+      return;
+    }
+
+    const canvas = qrEl.querySelector('canvas');
+    const img = qrEl.querySelector('img');
+    if (canvas) {
+      currentCanvas = canvas;
+      downloadBtn.disabled = false;
+    } else if (img) {
+      currentCanvas = img;
+      downloadBtn.disabled = false;
+    }
+    statusEl.textContent =
+      `Generated successfully\nCharacters: ${[...value].length.toLocaleString()}\n` +
+      `UTF-8 bytes: ${bytes.toLocaleString()}\nQR version: ${result.version} of 40\n` +
+      `Error correction: ${result.level}`;
+  }
+
+  document.getElementById('generate').addEventListener('click', generate);
+  document.getElementById('clear').addEventListener('click', () => {
+    textEl.value = '';
+    clearQR();
+    statusEl.textContent = 'Cleared.';
+    textEl.focus();
+  });
+  downloadBtn.addEventListener('click', () => {
+    if (!currentCanvas) return;
+    let dataUrl;
+    if (currentCanvas.tagName.toLowerCase() === 'canvas') {
+      dataUrl = currentCanvas.toDataURL('image/png');
+    } else {
+      const c = document.createElement('canvas');
+      c.width = currentCanvas.naturalWidth || 640;
+      c.height = currentCanvas.naturalHeight || 640;
+      c.getContext('2d').drawImage(currentCanvas, 0, 0);
+      dataUrl = c.toDataURL('image/png');
+    }
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = 'qr-code.png';
+    a.click();
+  });
+
+  // Generate on Ctrl/Cmd+Enter.
+  textEl.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generate();
+  });
+})();
+</script>
+</body>
+</html>
